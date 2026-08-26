@@ -1,0 +1,51 @@
+# ==========================================
+# C/C++ 通用编译中间产物与二进制测试文件
+# ==========================================
+*.o
+*.a
+*.so
+*.out
+*.dSYM/
+*.gch
+
+# 拦截常见的本地测试可执行文件
+main
+test
+*.exe
+
+# ==========================================
+# CS:APP 专属 Lab 编译工具与二进制产物
+# ==========================================
+# Data Lab
+dlc
+btest
+fshow
+ishow
+
+# Bomb / Attack Lab
+bomb
+ctarget
+rtarget
+hex2raw
+
+# Cache Lab
+csim-ref
+test-csim
+test-trans
+
+# Shell / Malloc / Proxy Lab
+tsh
+mdriver
+proxy
+
+# 实验原始压缩包与临时数据
+*.tar
+*.tar.gz
+
+# ==========================================
+# 系统与编辑器冗余
+# ==========================================
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+.DS_Store
