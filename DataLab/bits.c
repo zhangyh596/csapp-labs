@@ -197,7 +197,10 @@ int allOddBits(int x)
  */
 int negate(int x)
 {
-  return 2;
+  // -x == ~x + 1;
+  // x + ~x == 0xFFFFFFFF
+  // x + ~x + 1 == 0x00000000
+  return ~x + 1;
 }
 // 3
 /*
