@@ -246,7 +246,15 @@ int conditional(int x, int y, int z)
  */
 int isLessOrEqual(int x, int y)
 {
-  return 2;
+  // 无法直接进行相减，会发生溢出
+  // 先提取符号位
+  int sx = (x >> 31) & 1;
+  int sy = (y >> 31) & 1;
+  // 情况1：x与y符号位不同的话先减可能会溢出，此时只要sx == 1 && sy == 0就可以满足x < y
+  int sign1 = sx & !sy;
+  // 情况2：x与y符号位相同，直接相减绝对不会溢出(检查y + ~x + 1的符号位是否为 0)
+  int sign2 = !(sx ^ sy) & !((y + ~x + 1) >> 31);
+  return sign1 | sign2;
 }
 // 4
 /*
