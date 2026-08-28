@@ -156,8 +156,7 @@ int bitXor(int x, int y)
  */
 int tmin(void)
 {
-
-  return 2;
+  return 1 << 31;
 }
 // 2
 /*
