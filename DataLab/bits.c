@@ -229,7 +229,13 @@ int isAsciiDigit(int x)
  */
 int conditional(int x, int y, int z)
 {
-  return 2;
+  // 利用x构造一个全0或全1的32位掩码
+  // 当 mask = 0xFFFFFFFF 时，(mask & y) | (~mask & z) == y
+  // 当 mask = 0x00000000 时，(mask & y) | (~mask & z) == z
+  // 当x == 0时，mask == 0x00000000，当x != 0时，mask == 0xFFFFFFFF
+  // 可以通过对!!x先移到符号位再进行算术右移
+  int mask = (!!x << 31) >> 31;
+  return (mask & y) | (~mask & z);
 }
 /*
  * isLessOrEqual - if x <= y  then return 1, else return 0
