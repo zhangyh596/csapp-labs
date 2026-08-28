@@ -214,7 +214,11 @@ int negate(int x)
  */
 int isAsciiDigit(int x)
 {
-  return 2;
+  // 如果直接进行减法（如x - 0x30），可能会发生溢出（如x == TMin）
+  // 由于高位部分均为3，所以我们先把范围缩小到0x30 - 0x3F
+  // 此时再进行减法便不会发生溢出(利用前面实现的取反将减法变成加法)
+  // 需要满足0x39 - x >= 0（即符号位是0）
+  return !((x >> 4) ^ 0x3) & !((0x39 + ~x + 1) >> 31 & 0x1);
 }
 /*
  * conditional - same as x ? y : z
