@@ -168,7 +168,10 @@ int tmin(void)
  */
 int isTmax(int x)
 {
-  return 2;
+  // Tmax + 1 == Tmin
+  // ~(Tmax + 1) == Tmax
+  // 但是会发现-1也会符合这个标准，因为-1的二进制补码是全1，加1会溢出为全0，按位取反后又会变成全1
+  return !(x ^ ~(x + 1)) & !!(~x);
 }
 /*
  * allOddBits - return 1 if all odd-numbered bits in word set to 1
@@ -180,7 +183,8 @@ int isTmax(int x)
  */
 int allOddBits(int x)
 {
-  return 2;
+  // 考查掩码，先把所有奇数位提取出来然后看看是否等于0xAAAAAAAA(使用异或)
+  return !((x & 0xAAAAAAAA) ^ 0xAAAAAAAA);
 }
 /*
  * negate - return -x
