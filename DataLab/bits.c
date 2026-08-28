@@ -184,7 +184,9 @@ int isTmax(int x)
 int allOddBits(int x)
 {
   // 考查掩码，先把所有奇数位提取出来然后看看是否等于0xAAAAAAAA(使用异或)
-  return !((x & 0xAAAAAAAA) ^ 0xAAAAAAAA);
+  // 题目不能直接使用0xAAAAAAAA，只能使用0x0 - 0xff
+  int mask = 0xAA | (0xAA << 8) | (0xAA << 16) | (0xAA << 24);
+  return !((x & mask) ^ mask);
 }
 /*
  * negate - return -x
