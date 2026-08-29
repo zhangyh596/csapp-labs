@@ -289,6 +289,7 @@ int logicalNeg(int x)
  */
 int howManyBits(int x)
 {
+  int b16, b8, b4, b2, b1, b0;
   // 正数：所需位数等于最高有效位1所在的位置p再加上1位符号位
   // 负数：所需位数等于最高有效位0所在的位置p再加上1位符号位
   // 我们将负数也想办法转成正数的逻辑（找最高有效位1，即按位取反）
@@ -297,24 +298,24 @@ int howManyBits(int x)
   x = x ^ (x >> 31);
 
   // 使用分治法（二分查找）查找最高有效位1
-  int b16 = !!(x >> 16) << 4;
+  b16 = !!(x >> 16) << 4;
   // 若b16 == 16（高16位存在 1），我们可以将x >> b16，低16位变成高16位
   // 若b16 == 0（高16位不存在1），x >> b16不变
   x = x >> b16;
 
-  int b8 = !!(x >> 8) << 3;
+  b8 = !!(x >> 8) << 3;
   x = x >> b8;
 
-  int b4 = !!(x >> 4) << 2;
+  b4 = !!(x >> 4) << 2;
   x = x >> b4;
 
-  int b2 = !!(x >> 2) << 1;
+  b2 = !!(x >> 2) << 1;
   x = x >> b2;
 
-  int b1 = !!(x >> 1);
+  b1 = !!(x >> 1);
   x = x >> b1;
 
-  int b0 = x;
+  b0 = x;
 
   // 最终需要加上一位符号位
   return b16 + b8 + b4 + b2 + b1 + b0 + 1;
@@ -430,5 +431,26 @@ int floatFloat2Int(unsigned uf)
  */
 unsigned floatPower2(int x)
 {
-  return 2;
+  int exp = x + 127;
+
+  if (exp > 0 && exp < 255)
+  {
+    return exp << 23;
+  }
+  else if (exp >= 255)
+  {
+    return 0x7F800000;
+  }
+  else
+  {
+    // frac一共有23位，第22位代表2^-1，最低位（第0位）代表2^-23
+    if (exp >= -22)
+    {
+      return 1 << (22 + exp);
+    }
+    else
+    {
+      return 0;
+    }
+  }
 }
