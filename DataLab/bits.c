@@ -251,10 +251,10 @@ int isLessOrEqual(int x, int y)
   int sx = (x >> 31) & 1;
   int sy = (y >> 31) & 1;
   // 情况1：x与y符号位不同的话先减可能会溢出，此时只要sx == 1 && sy == 0就可以满足x < y
-  int sign1 = sx & !sy;
+  int case1 = sx & !sy;
   // 情况2：x与y符号位相同，直接相减绝对不会溢出(检查y + ~x + 1的符号位是否为 0)
-  int sign2 = !(sx ^ sy) & !((y + ~x + 1) >> 31);
-  return sign1 | sign2;
+  int case2 = !(sx ^ sy) & !((y + ~x + 1) >> 31);
+  return case1 | case2;
 }
 // 4
 /*
@@ -267,7 +267,13 @@ int isLessOrEqual(int x, int y)
  */
 int logicalNeg(int x)
 {
-  return 2;
+  // 实现x == 0返回1，x != 0返回0
+  // 发现x == 0，x == -x == ~x + 1
+  // 而TMin == ~TMin + 1
+  // 一般情况下（x != 0且x != TMin），x与-x的符号位不同，(x | (~x + 1)) >> 31 == -1
+  // 当x == 0时，x和-x符号位均为0，(x | (~x + 1)) >> 31 == 0
+  // 当x == TMin时先，x和-x符号位均为1，(x | (~x + 1)) >> 31 == -1
+  return ((x | (~x + 1)) >> 31) + 1;
 }
 /* howManyBits - return the minimum number of bits required to represent x in
  *             two's complement
