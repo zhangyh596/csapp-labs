@@ -378,7 +378,42 @@ unsigned floatScale2(unsigned uf)
  */
 int floatFloat2Int(unsigned uf)
 {
-  return 2;
+  int s = uf & 0x80000000;
+  int exp = (uf >> 23) & 0xFF;
+  int frac = uf & 0x7FFFFF;
+
+  // 计算出真正的指数 E
+  int E = exp - 127;
+  if (E < 0)
+  {
+    return 0;
+  }
+  else if (E >= 31)
+  {
+    return 0x80000000u;
+  }
+  else
+  {
+    // 给 frac 拼上隐式的 1
+    int M = frac | 0x800000;
+    if (E >= 23)
+    {
+      M <<= (E - 23);
+    }
+    else
+    {
+      M >>= (23 - E);
+    }
+
+    if (s == 0x80000000)
+    {
+      return -M;
+    }
+    else
+    {
+      return M;
+    }
+  }
 }
 /*
  * floatPower2 - Return bit-level equivalent of the expression 2.0^x
