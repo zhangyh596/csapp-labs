@@ -319,7 +319,7 @@ int howManyBits(int x)
   // 最终需要加上一位符号位
   return b16 + b8 + b4 + b2 + b1 + b0 + 1;
 }
-// float
+// flofenzhi
 /*
  * floatScale2 - Return bit-level equivalent of expression 2*f for
  *   floating point argument f.
@@ -333,7 +333,36 @@ int howManyBits(int x)
  */
 unsigned floatScale2(unsigned uf)
 {
-  return 2;
+  int s = uf & 0x80000000;
+  int exp = (uf >> 23) & 0xFF;
+  int frac = uf & 0x7FFFFF;
+
+  // 分三种情况进行处理
+  // 1.特殊值区间 (exp == 0xFF，即 255)
+  // 2.规格化数区间 (0 < exp < 255)
+  // 3.非规格化数区间 (exp == 0)
+  if (exp == 0xFF)
+  {
+    return uf;
+  }
+  else if (exp > 0 && exp < 0xFF)
+  {
+    exp++;
+    if (exp == 0xFF)
+    {
+      return s | (0xFF << 23) | 0;
+    }
+    else
+    {
+      return s | (exp << 23) | frac;
+    }
+  }
+  else
+  {
+    // 非规格化数的尾数一旦乘以2发生溢出，这个溢出来的 1 会自动顶到 exp 的位置上，让 exp 瞬间从 0 变成 1
+    // 完美模拟了从“非规格化数”进位成“规格化数”的过程
+    return s | (frac << 1);
+  }
 }
 /*
  * floatFloat2Int - Return bit-level equivalent of expression (int) f
