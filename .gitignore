@@ -49,3 +49,6 @@ proxy
 !.vscode/settings.json
 !.vscode/tasks.json
 .DS_Store
+
+# Workspace-only instructions
+AGENTS.md
