@@ -155,13 +155,13 @@ void transpose_submit(int M, int N, int A[N][M], int B[M][N])
         // 首先尝试 8*8 分块
         // misses 次数在 2119，不符合要求
         // 后面尝试改成 16*16 分块
-        for (int block_row = 0; block_row < N; block_row += 16)
+        for (int block_row = 0; block_row < N; block_row += 17)
         {
-            for (int block_col = 0; block_col < M; block_col += 16)
+            for (int block_col = 0; block_col < M; block_col += 17)
             {
-                for (int i = block_row; i < block_row + 16 && i < N; i++)
+                for (int i = block_row; i < block_row + 17 && i < N; i++)
                 {
-                    for (int j = block_col; j < block_col + 16 && j < M; j++)
+                    for (int j = block_col; j < block_col + 17 && j < M; j++)
                     {
                         int tmp = A[i][j];
                         B[j][i] = tmp;
