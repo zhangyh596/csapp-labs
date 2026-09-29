@@ -1,4 +1,5 @@
-# Cache Lab 实验复盘：Part A Cache Simulator
+# Cache Lab 实验复盘
+# Part A Cache Simulator
 
 ---
 
@@ -1728,7 +1729,7 @@ i < block_row + 8
 j < block_col + 8
 ```
 
-## 27. 61×67 选择 16×16 通用块
+## 27. 61×67 块大小实验：最终选择 17×17
 
 边界安全的简单 8×8 通用转置已经通过 correctness，但结果为：
 
