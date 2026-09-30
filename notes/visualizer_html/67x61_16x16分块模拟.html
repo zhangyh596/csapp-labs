@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CS:APP CacheLab - 16x16 分块 "当场榨干" 效应演示</title>
+    <style>
+        :root {
+            --bg: #121212; --panel-bg: #1e1e1e; --text: #e0e0e0;
+            --a-color: #2196f3; --b-color: #ff9800; --empty: #2c2c2c;
+            --hit: #4caf50; --evict: #f44336; --perfect: #9c27b0;
+        }
+        body { font-family: 'Consolas', 'Courier New', monospace; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+        h2 { text-align: center; margin-top: 0; color: #fff; }
+        .container { display: flex; flex: 1; gap: 20px; overflow: hidden; }
+        .cache-panel { flex: 1.2; background: var(--panel-bg); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; }
+        .log-panel { flex: 0.8; background: var(--panel-bg); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; }
+        
+        .stats { display: flex; justify-content: space-between; background: #000; padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 1.1em; font-weight: bold; border-left: 5px solid var(--perfect); }
+        .stat-item { text-align: center; }
+        .stat-val { font-size: 1.4em; color: var(--a-color); }
+        
+        .cache-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; flex: 1; overflow-y: auto; padding-right: 5px; }
+        .cache-set { background: var(--empty); border: 2px solid #444; border-radius: 8px; padding: 10px; text-align: center; position: relative; transition: 0.1s; display: flex; flex-direction: column; justify-content: center; min-height: 70px; }
+        .set-id { font-size: 0.75em; color: #888; position: absolute; top: 5px; left: 5px; }
+        .set-content { margin-top: 10px; font-weight: bold; font-size: 1em; }
+        
+        /* Combo 计数器条 */
+        .combo-bar-container { width: 100%; height: 6px; background: #333; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+        .combo-bar { height: 100%; width: 0%; background: var(--hit); transition: width 0.1s; }
+        .combo-text { font-size: 0.75em; margin-top: 2px; color: #aaa; }
+        
+        .owner-A { background: rgba(33, 150, 243, 0.15); border-color: var(--a-color); color: var(--a-color); }
+        .owner-B { background: rgba(255, 152, 0, 0.15); border-color: var(--b-color); color: var(--b-color); }
+        
+        @keyframes flashHit { 0% { box-shadow: 0 0 15px var(--hit) inset; background: rgba(76, 175, 80, 0.3); } 100% { } }
+        @keyframes flashEvict { 0% { box-shadow: 0 0 20px var(--evict); background: var(--evict); color: #fff; transform: scale(1.05); } 100% { transform: scale(1); } }
+        @keyframes flashPerfect { 0% { box-shadow: 0 0 20px var(--perfect); background: var(--perfect); color: #fff; transform: scale(1.1); } 100% { } }
+        
+        .anim-hit { animation: flashHit 0.3s ease-out; }
+        .anim-evict { animation: flashEvict 0.5s ease-out; }
+        .anim-perfect { animation: flashPerfect 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        
+        .log-box { flex: 1; background: #0a0a0a; border: 1px solid #333; border-radius: 4px; padding: 10px; overflow-y: auto; font-size: 0.9em; line-height: 1.6; }
+        .log-entry { border-bottom: 1px dotted #222; padding: 3px 0; }
+        .t-a { color: var(--a-color); font-weight: bold;}
+        .t-b { color: var(--b-color); font-weight: bold;}
+        .t-ev { color: var(--evict); }
+        .t-ok { color: var(--hit); }
+        .t-pf { color: #e1bee7; background: #4a148c; padding: 0 4px; border-radius: 3px; font-size: 0.9em; }
+        
+        .controls { display: flex; justify-content: center; gap: 15px; margin: 15px 0; }
+        button { padding: 10px 25px; font-size: 15px; font-weight: bold; cursor: pointer; border: none; border-radius: 5px; color: white; }
+        #btn-step { background: #1976d2; } #btn-play { background: #388e3c; } #btn-pause { background: #f57c00; } #btn-skip { background: #7b1fa2; }
+        button:hover { filter: brightness(1.2); }
+    </style>
+</head>
+<body>
+
+<h2>CacheLab $16\times16$ 分块: “当场消费”原理推演</h2>
+
+<div class="controls">
+    <button id="btn-step">单步执行 (Step)</button>
+    <button id="btn-play">自动播放 (Play)</button>
+    <button id="btn-pause">暂停 (Pause)</button>
+    <button id="btn-skip">⏩ 快进到 i=1, 见证连击</button>
+</div>
+
+<div class="container">
+    <div class="cache-panel">
+        <div class="stats">
+            <div class="stat-item">当前坐标<br><span class="stat-val" id="st-coord">i=0, j=0</span></div>
+            <div class="stat-item">执行指令<br><span class="stat-val" id="st-ops">0 / 512</span></div>
+            <div class="stat-item">总 Miss 数<br><span class="stat-val" id="st-miss" style="color:var(--evict)">0</span></div>
+            <div class="stat-item">完美榨干(满8连击)<br><span class="stat-val" id="st-perfect" style="color:var(--perfect)">0</span></div>
+        </div>
+        <div class="cache-grid" id="cache-grid"></div>
+    </div>
+    
+    <div class="log-panel">
+        <h3 style="margin-top:0; color:#aaa;">物理访存事件日志</h3>
+        <div class="log-box" id="log-box"></div>
+    </div>
+</div>
+
+<script>
+    const SETS = 32, LINE_SIZE = 32, A_COLS = 61, B_COLS = 67;
+    let cache = Array(SETS).fill(null).map(() => ({ valid: false, tag: -1, owner: '', text: 'Empty', hits: 0 }));
+    let trace = [], currentStep = 0, missCount = 0, perfectCount = 0, playTimer = null;
+
+    // 绘制 Cache Grid
+    const gridEl = document.getElementById('cache-grid');
+    for (let i = 0; i < SETS; i++) {
+        gridEl.innerHTML += `
+            <div class="cache-set" id="set-${i}">
+                <div class="set-id">Set ${i}</div>
+                <div class="set-content" id="sc-${i}">[ 空 ]</div>
+                <div class="combo-bar-container"><div class="combo-bar" id="cb-${i}"></div></div>
+                <div class="combo-text" id="ct-${i}">Hits: 0/8</div>
+            </div>`;
+    }
+
+    // 生成 16x16 轨迹 (仅跑 Block(0,0), 共 256 次读 + 256 次写 = 512 步)
+    for (let i = 0; i < 16; i++) {
+        for (let j = 0; j < 16; j++) {
+            trace.push({ type: 'READ', owner: 'A', i: i, j: j, addr: (i * A_COLS + j) * 4 });
+            trace.push({ type: 'WRITE', owner: 'B', i: j, j: i, addr: 65536 + (j * B_COLS + i) * 4 });
+        }
+    }
+
+    const logBox = document.getElementById('log-box');
+    function logEvent(html) {
+        logBox.innerHTML += `<div class="log-entry">${html}</div>`;
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function doStep() {
+        if (currentStep >= trace.length) { clearInterval(playTimer); return; }
+        
+        let op = trace[currentStep], lineIdx = Math.floor(op.addr / LINE_SIZE);
+        let setIdx = lineIdx % SETS, tag = Math.floor(lineIdx / SETS);
+        let setEl = document.getElementById(`set-${setIdx}`);
+        let scEl = document.getElementById(`sc-${setIdx}`), cbEl = document.getElementById(`cb-${setIdx}`), ctEl = document.getElementById(`ct-${setIdx}`);
+        
+        setEl.classList.remove('anim-hit', 'anim-evict', 'anim-perfect');
+        void setEl.offsetWidth; // trigger reflow
+
+        let oldState = cache[setIdx], actionHtml = '';
+        let targetOwnerHtml = op.owner === 'A' ? `<span class="t-a">A[${op.i}][${op.j}]</span>` : `<span class="t-b">B[${op.i}][${op.j}]</span>`;
+
+        if (oldState.valid && oldState.tag === tag) {
+            // HIT
+            oldState.hits++;
+            actionHtml = `<span class="t-ok">[HIT]</span> Set ${setIdx} 连击数 +1`;
+            setEl.classList.add('anim-hit');
+            
+            // 完美榨干检测
+            if (oldState.hits === 8) {
+                perfectCount++;
+                document.getElementById('st-perfect').innerText = perfectCount;
+                actionHtml += ` <span class="t-pf">★ 100% 榨干 (8连击)!</span>`;
+                setEl.classList.add('anim-perfect');
+            }
+        } else {
+            // MISS / EVICT
+            missCount++;
+            document.getElementById('st-miss').innerText = missCount;
+            
+            if (oldState.valid) {
+                let wasteMsg = oldState.hits < 8 ? `(仅用${oldState.hits}次, 亏!)` : `(已满8次, 死而无憾)`;
+                actionHtml = `<span class="t-ev">[EVICT]</span> 踢飞 ${oldState.text} ${wasteMsg}`;
+                setEl.classList.add('anim-evict');
+            } else {
+                actionHtml = `<span class="t-ev">[MISS]</span> 冷启动`;
+            }
+
+            // 加载新 Line
+            let colStart = Math.floor(op.j / 8) * 8;
+            cache[setIdx] = { valid: true, tag: tag, owner: op.owner, text: `${op.owner}[${op.i}][${colStart}~${colStart+7}]`, hits: 1 };
+            setEl.className = `cache-set owner-${op.owner} anim-evict`;
+            scEl.innerText = cache[setIdx].text;
+        }
+
+        // 更新 Combo UI
+        let hits = Math.min(cache[setIdx].hits, 8);
+        cbEl.style.width = `${(hits / 8) * 100}%`;
+        cbEl.style.background = hits === 8 ? 'var(--perfect)' : 'var(--hit)';
+        ctEl.innerText = `Hits: ${hits}/8`;
+
+        logEvent(`${currentStep.toString().padStart(3,'0')}: ${op.type} ${targetOwnerHtml} | ${actionHtml}`);
+        
+        currentStep++;
+        document.getElementById('st-ops').innerText = `${currentStep} / 512`;
+        if (op.owner === 'A') document.getElementById('st-coord').innerText = `i=${op.i}, j=${op.j}`;
+    }
+
+    document.getElementById('btn-step').onclick = doStep;
+    document.getElementById('btn-play').onclick = () => { if(!playTimer) playTimer = setInterval(doStep, 100); };
+    document.getElementById('btn-pause').onclick = () => { clearInterval(playTimer); playTimer = null; };
+    document.getElementById('btn-skip').onclick = () => { 
+        clearInterval(playTimer); 
+        // 快速跑到 i=1, 约 32 步
+        while (currentStep < trace.length && trace[currentStep].i === 0) doStep(); 
+    };
+</script>
+</body>
+</html>

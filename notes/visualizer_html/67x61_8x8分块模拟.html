@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CacheLab 空间局部性透视 (Cache Line 利用率追踪)</title>
+    <style>
+        :root {
+            --bg: #1a1a1a; --panel-bg: #222; --text: #d4d4d4;
+            --a-color: #4da6ff; --b-color: #ff9800; --empty-border: #444; --empty-text: #888;
+            --hit: #4caf50; --evict: #f44336; --miss: #00bcd4; --full-bar: #9c27b0;
+        }
+        body { font-family: 'Consolas', 'Courier New', monospace; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+        h2 { text-align: center; margin-top: 0; color: #fff; margin-bottom: 15px; font-size: 1.5em; }
+        
+        /* 顶部控制栏 */
+        .controls { display: flex; justify-content: center; align-items: center; gap: 15px; margin-bottom: 20px; }
+        button { padding: 8px 20px; font-size: 14px; font-family: inherit; font-weight: bold; cursor: pointer; border: none; border-radius: 4px; background: #444; color: white; transition: 0.2s; }
+        button:hover { background: #666; }
+        #btn-step { background: #1976d2; } #btn-step:hover { background: #2196f3; }
+        #btn-play { background: #388e3c; } #btn-play:hover { background: #4caf50; }
+        
+        .container { display: flex; flex: 1; gap: 20px; overflow: hidden; }
+        
+        /* 左侧 Cache 网格面板 */
+        .cache-panel { flex: 1.5; background: var(--panel-bg); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; overflow-y: auto; }
+        .cache-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        
+        /* 单个 Set 卡片样式 */
+        .set-card { 
+            background: #2a2a2a; border: 2px solid var(--empty-border); border-radius: 8px; 
+            padding: 12px; display: flex; flex-direction: column; position: relative;
+            transition: all 0.2s ease;
+        }
+        .set-card.owner-A { border-color: var(--a-color); }
+        .set-card.owner-B { border-color: var(--b-color); }
+        
+        .set-header { font-size: 0.85em; color: #888; margin-bottom: 10px; }
+        .set-body { font-size: 1.2em; font-weight: bold; text-align: center; margin-bottom: 15px; color: var(--empty-text); letter-spacing: -0.5px; }
+        .owner-A .set-body { color: var(--a-color); }
+        .owner-B .set-body { color: var(--b-color); }
+        
+        /* 进度条组件 */
+        .set-footer { display: flex; flex-direction: column; gap: 6px; }
+        .bar-bg { background: #444; height: 6px; border-radius: 3px; width: 100%; overflow: hidden; }
+        .bar-fill { height: 100%; width: 0%; background: var(--hit); transition: width 0.1s linear, background-color 0.2s; }
+        .bar-fill.full { background: var(--full-bar); } 
+        .hit-text { text-align: center; font-size: 0.85em; color: #aaa; }
+        
+        /* 右侧日志面板 */
+        .log-panel { flex: 0.8; background: var(--panel-bg); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; }
+        .stats-box { background: #111; padding: 15px; border-radius: 6px; margin-bottom: 15px; font-size: 0.95em; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+        .stat-item { background: #222; padding: 6px 10px; border-radius: 4px; border-left: 3px solid #555; }
+        
+        .log-box { flex: 1; background: #000; border: 1px solid #444; border-radius: 4px; padding: 10px; overflow-y: auto; font-size: 0.85em; line-height: 1.6; }
+        .log-entry { border-bottom: 1px dashed #333; padding: 4px 0; }
+        
+        /* 动画 */
+        @keyframes evictShake { 0% { transform: translateX(0); border-color: var(--evict); } 25% { transform: translateX(-3px); } 50% { transform: translateX(3px); } 75% { transform: translateX(-3px); } 100% { transform: translateX(0); } }
+        .anim-evict { animation: evictShake 0.4s; }
+    </style>
+</head>
+<body>
+
+<h2>CacheLab 67x61 矩阵 - Cache Line 利用率追踪 (8x8 Block)</h2>
+
+<div class="controls">
+    <button id="btn-step">单步执行 (Step)</button>
+    <button id="btn-play">▶ 自动播放 (Play)</button>
+    <button id="btn-pause">⏸ 暂停 (Pause)</button>
+    <button id="btn-reset">重置 (Reset)</button>
+</div>
+
+<div class="container">
+    <div class="cache-panel">
+        <div class="cache-grid" id="cache-grid"></div>
+    </div>
+    
+    <div class="log-panel">
+        <div class="stats-box">
+            <div class="stats-grid">
+                <div class="stat-item" style="border-color: #fff">进度: <span id="stat-ops">0 / 512</span></div>
+                <div class="stat-item" style="border-color: #ffeb3b">当前块: <span id="stat-block">Block(0,0)</span></div>
+                <div class="stat-item" style="border-color: var(--hit)">全局命中率: <span id="stat-hitrate" style="color:var(--hit); font-weight:bold;">0.0%</span></div>
+                <!-- ★ 修改点1：UI 上将“冲突踢出”改为“总 Miss 数” ★ -->
+                <div class="stat-item" style="border-color: var(--miss)">总 Miss 数: <span id="stat-misses" style="color:var(--miss); font-weight:bold;">0</span></div>
+            </div>
+            <div class="bar-bg" style="height:4px;"><div class="bar-fill" id="global-progress" style="background:#1976d2"></div></div>
+        </div>
+        <div class="log-box" id="log-box"></div>
+    </div>
+</div>
+
+<script>
+    const SETS = 32;
+    const LINE_SIZE = 32; 
+    const A_COLS = 61;    
+    const B_COLS = 67;    
+    const ADDR_A_BASE = 0;
+    const ADDR_B_BASE = 65536; 
+    const TOTAL_OPS = 512; 
+
+    let cache = Array(SETS).fill(null).map(() => ({ 
+        valid: false, tag: -1, owner: '', text: '[ 空 ]', activeTouches: 0 
+    }));
+    
+    let trace = []; 
+    let currentStep = 0;
+    let hitCount = 0;
+    // ★ 修改点2：将 evictCount 改为 missCount ★
+    let missCount = 0; 
+    let playInterval = null;
+
+    const gridEl = document.getElementById('cache-grid');
+    for (let i = 0; i < SETS; i++) {
+        const div = document.createElement('div');
+        div.className = 'set-card';
+        div.id = `set-${i}`;
+        div.innerHTML = `
+            <div class="set-header">Set ${i}</div>
+            <div class="set-body" id="set-text-${i}">[ 空 ]</div>
+            <div class="set-footer">
+                <div class="bar-bg"><div class="bar-fill" id="set-bar-${i}"></div></div>
+                <div class="hit-text" id="set-hits-${i}">Hits: 0/8</div>
+            </div>
+        `;
+        gridEl.appendChild(div);
+    }
+
+    for (let bi = 0; bi < 16; bi += 8) {
+        for (let bj = 0; bj < 16; bj += 8) {
+            for (let i = bi; i < bi + 8; i++) {
+                for (let j = bj; j < bj + 8; j++) {
+                    let addrA = ADDR_A_BASE + (i * A_COLS + j) * 4;
+                    trace.push({ type: 'READ', owner: 'A', i, j, addr: addrA, name: `A[${i}][${j}]`, block: `Block(${bi},${bj})` });
+                    let addrB = ADDR_B_BASE + (j * B_COLS + i) * 4;
+                    trace.push({ type: 'WRITE', owner: 'B', i: j, j: i, addr: addrB, name: `B[${j}][${i}]`, block: `Block(${bi},${bj})` });
+                }
+            }
+        }
+    }
+
+    const logBox = document.getElementById('log-box');
+    function logEvent(html) {
+        const div = document.createElement('div');
+        div.className = 'log-entry';
+        div.innerHTML = html;
+        logBox.appendChild(div);
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function doStep() {
+        if (currentStep >= trace.length) {
+            clearInterval(playInterval); return;
+        }
+
+        let op = trace[currentStep];
+        let lineIdx = Math.floor(op.addr / LINE_SIZE);
+        let setIdx = lineIdx % SETS;
+        let tag = Math.floor(lineIdx / SETS);
+        
+        let state = cache[setIdx];
+        let cardEl = document.getElementById(`set-${setIdx}`);
+        let textEl = document.getElementById(`set-text-${setIdx}`);
+        let barEl = document.getElementById(`set-bar-${setIdx}`);
+        let hitsEl = document.getElementById(`set-hits-${setIdx}`);
+        
+        cardEl.classList.remove('anim-evict');
+        void cardEl.offsetWidth; 
+
+        let actionLog = '';
+
+        if (state.valid && state.tag === tag) {
+            hitCount++;
+            state.activeTouches = Math.min(state.activeTouches + 1, 8);
+            actionLog = `<span style="color:var(--hit)">[HIT]</span> ${op.name}`;
+        } else {
+            // ★ 修改点3：只要没进入上面的 HIT 判定，就绝对是一次 Miss ★
+            missCount++; 
+
+            if (state.valid) {
+                actionLog = `<span style="color:var(--evict)">[MISS + EVICT]</span> 踢出 ${state.text} (存活期Hits: ${state.activeTouches}/8)`;
+                cardEl.classList.add('anim-evict');
+            } else {
+                actionLog = `<span style="color:var(--miss)">[COLD MISS]</span> 冷启动载入`;
+            }
+
+            let chunkStart = Math.floor(op.j / 8) * 8;
+            state.valid = true;
+            state.tag = tag;
+            state.owner = op.owner;
+            state.text = `${op.owner}[${op.i}][${chunkStart}~${chunkStart+7}]`;
+            state.activeTouches = 1; 
+        }
+
+        cardEl.className = `set-card owner-${state.owner}`;
+        textEl.innerText = state.text;
+        hitsEl.innerText = `Hits: ${state.activeTouches}/8`;
+        
+        let pct = (state.activeTouches / 8) * 100;
+        barEl.style.width = `${pct}%`;
+        if (state.activeTouches === 8) barEl.classList.add('full');
+        else barEl.classList.remove('full');
+
+        let ownerColor = op.owner === 'A' ? 'var(--a-color)' : 'var(--b-color)';
+        logEvent(`${(currentStep+1).toString().padStart(3,'0')}: <strong style="color:${ownerColor}">${op.type}</strong> | Set:${setIdx} | ${actionLog}`);
+
+        currentStep++;
+        document.getElementById('stat-ops').innerText = `${currentStep} / ${TOTAL_OPS}`;
+        document.getElementById('stat-block').innerText = op.block;
+        // ★ 修改点4：更新 DOM 显示 ★
+        document.getElementById('stat-misses').innerText = missCount;
+        document.getElementById('stat-hitrate').innerText = `${((hitCount / currentStep) * 100).toFixed(1)}%`;
+        document.getElementById('global-progress').style.width = `${(currentStep / TOTAL_OPS) * 100}%`;
+    }
+
+    document.getElementById('btn-step').onclick = doStep;
+    document.getElementById('btn-play').onclick = () => { if(!playInterval) playInterval = setInterval(doStep, 40); };
+    document.getElementById('btn-pause').onclick = () => { clearInterval(playInterval); playInterval = null; };
+    document.getElementById('btn-reset').onclick = () => { location.reload(); };
+</script>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CacheLab 灾难现场: 32x32 分块推演 (Working Set 溢出)</title>
+    <style>
+        :root {
+            --bg: #1a1a1a; --panel-bg: #222; --text: #d4d4d4;
+            --a-color: #4da6ff; --b-color: #ff9800; --empty-border: #444; --empty-text: #888;
+            --hit: #4caf50; --evict: #e91e63; --miss: #00bcd4; --full-bar: #9c27b0;
+        }
+        body { font-family: 'Consolas', 'Courier New', monospace; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+        h2 { text-align: center; margin-top: 0; color: #e91e63; margin-bottom: 15px; font-size: 1.5em; text-shadow: 0 0 10px rgba(233,30,99,0.5); }
+        
+        .controls { display: flex; justify-content: center; align-items: center; gap: 15px; margin-bottom: 20px; }
+        button { padding: 8px 20px; font-size: 14px; font-family: inherit; font-weight: bold; cursor: pointer; border: none; border-radius: 4px; background: #444; color: white; transition: 0.2s; }
+        button:hover { background: #666; }
+        #btn-step { background: #1976d2; } #btn-step:hover { background: #2196f3; }
+        #btn-play { background: #388e3c; } #btn-play:hover { background: #4caf50; }
+        #btn-fast { background: #f57c00; } #btn-fast:hover { background: #ff9800; }
+        
+        .container { display: flex; flex: 1; gap: 20px; overflow: hidden; }
+        .cache-panel { flex: 1.5; background: var(--panel-bg); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; overflow-y: auto; }
+        .cache-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        
+        .set-card { 
+            background: #2a2a2a; border: 2px solid var(--empty-border); border-radius: 8px; 
+            padding: 12px; display: flex; flex-direction: column; position: relative;
+            transition: all 0.1s ease;
+        }
+        .set-card.owner-A { border-color: var(--a-color); }
+        .set-card.owner-B { border-color: var(--b-color); }
+        
+        .set-header { font-size: 0.85em; color: #888; margin-bottom: 10px; }
+        .set-body { font-size: 1.1em; font-weight: bold; text-align: center; margin-bottom: 15px; color: var(--empty-text); letter-spacing: -0.5px; }
+        .owner-A .set-body { color: var(--a-color); }
+        .owner-B .set-body { color: var(--b-color); }
+        
+        .set-footer { display: flex; flex-direction: column; gap: 6px; }
+        .bar-bg { background: #444; height: 6px; border-radius: 3px; width: 100%; overflow: hidden; }
+        .bar-fill { height: 100%; width: 0%; background: var(--hit); transition: width 0.05s linear; }
+        .bar-fill.full { background: var(--full-bar); }
+        .hit-text { text-align: center; font-size: 0.85em; color: #aaa; }
+        
+        .log-panel { flex: 0.8; background: var(--panel-bg); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; }
+        .stats-box { background: #111; padding: 15px; border-radius: 6px; margin-bottom: 15px; font-size: 0.95em; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+        .stat-item { background: #222; padding: 6px 10px; border-radius: 4px; border-left: 3px solid #555; }
+        
+        .log-box { flex: 1; background: #000; border: 1px solid #444; border-radius: 4px; padding: 10px; overflow-y: auto; font-size: 0.85em; line-height: 1.6; }
+        .log-entry { border-bottom: 1px dashed #333; padding: 2px 0; }
+        
+        @keyframes evictShake { 0% { transform: translateX(0); border-color: var(--evict); } 25% { transform: translateX(-2px); } 50% { transform: translateX(2px); } 75% { transform: translateX(-2px); } 100% { transform: translateX(0); } }
+        .anim-evict { animation: evictShake 0.2s; }
+    </style>
+</head>
+<body>
+
+<h2>⚠ 32x32 分块灾难推演 (2048 Ops: Cache 容量严重击穿)</h2>
+
+<div class="controls">
+    <button id="btn-step">单步执行</button>
+    <button id="btn-play">▶ 原速播放 (20ms)</button>
+    <button id="btn-fast">⏩ 狂飙模式 (1ms)</button>
+    <button id="btn-pause">⏸ 暂停</button>
+    <button id="btn-reset">重置</button>
+</div>
+
+<div class="container">
+    <div class="cache-panel">
+        <div class="cache-grid" id="cache-grid"></div>
+    </div>
+    
+    <div class="log-panel">
+        <div class="stats-box">
+            <div class="stats-grid">
+                <div class="stat-item" style="border-color: #fff">进度: <span id="stat-ops">0 / 2048</span></div>
+                <div class="stat-item" style="border-color: #e91e63">状态: <span id="stat-status" style="color:#e91e63">疯狂容量抖动</span></div>
+                <div class="stat-item" style="border-color: var(--hit)">全局命中率: <span id="stat-hitrate" style="color:var(--hit); font-weight:bold;">0.0%</span></div>
+                <div class="stat-item" style="border-color: var(--evict)">冲突踢出: <span id="stat-evicts" style="color:var(--evict); font-weight:bold;">0</span></div>
+            </div>
+            <div class="bar-bg" style="height:4px;"><div class="bar-fill" id="global-progress" style="background:#1976d2"></div></div>
+        </div>
+        <div class="log-box" id="log-box"></div>
+    </div>
+</div>
+
+<script>
+    const SETS = 32;
+    const LINE_SIZE = 32; 
+    const A_COLS = 61;    
+    const B_COLS = 67;    
+    const ADDR_A_BASE = 0;
+    const ADDR_B_BASE = 65536; 
+    
+    // 生成单一个 32x32 Block 的轨迹 (2048 操作)
+    let trace = []; 
+    for (let i = 0; i < 32; i++) {
+        for (let j = 0; j < 32; j++) {
+            let addrA = ADDR_A_BASE + (i * A_COLS + j) * 4;
+            trace.push({ type: 'READ', owner: 'A', i, j, addr: addrA, name: `A[${i}][${j}]` });
+            let addrB = ADDR_B_BASE + (j * B_COLS + i) * 4;
+            trace.push({ type: 'WRITE', owner: 'B', i: j, j: i, addr: addrB, name: `B[${j}][${i}]` });
+        }
+    }
+    const TOTAL_OPS = trace.length;
+
+    let cache = Array(SETS).fill(null).map(() => ({ valid: false, tag: -1, owner: '', text: '[ 空 ]', activeTouches: 0 }));
+    let currentStep = 0, hitCount = 0, evictCount = 0, playInterval = null;
+
+    const gridEl = document.getElementById('cache-grid');
+    for (let i = 0; i < SETS; i++) {
+        const div = document.createElement('div');
+        div.className = 'set-card';
+        div.id = `set-${i}`;
+        div.innerHTML = `
+            <div class="set-header">Set ${i}</div>
+            <div class="set-body" id="set-text-${i}">[ 空 ]</div>
+            <div class="set-footer">
+                <div class="bar-bg"><div class="bar-fill" id="set-bar-${i}"></div></div>
+                <div class="hit-text" id="set-hits-${i}">Hits: 0/8</div>
+            </div>
+        `;
+        gridEl.appendChild(div);
+    }
+
+    const logBox = document.getElementById('log-box');
+    function logEvent(html) {
+        const div = document.createElement('div');
+        div.className = 'log-entry';
+        div.innerHTML = html;
+        logBox.appendChild(div);
+        if(currentStep % 10 === 0 || playInterval === null) logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function doStep() {
+        if (currentStep >= TOTAL_OPS) { clearInterval(playInterval); return; }
+
+        let op = trace[currentStep];
+        let lineIdx = Math.floor(op.addr / LINE_SIZE);
+        let setIdx = lineIdx % SETS;
+        let tag = Math.floor(lineIdx / SETS);
+        
+        let state = cache[setIdx];
+        let cardEl = document.getElementById(`set-${setIdx}`);
+        let textEl = document.getElementById(`set-text-${setIdx}`);
+        let barEl = document.getElementById(`set-bar-${setIdx}`);
+        let hitsEl = document.getElementById(`set-hits-${setIdx}`);
+        
+        cardEl.classList.remove('anim-evict');
+        void cardEl.offsetWidth; 
+
+        let actionLog = '';
+
+        if (state.valid && state.tag === tag) {
+            hitCount++;
+            state.activeTouches = Math.min(state.activeTouches + 1, 8);
+            actionLog = `<span style="color:var(--hit)">[HIT]</span> ${op.name}`;
+        } else {
+            if (state.valid) {
+                evictCount++;
+                actionLog = `<span style="color:var(--evict)">[惨烈 EVICT]</span> 踢出 ${state.text} (${state.activeTouches}/8)`;
+                cardEl.classList.add('anim-evict');
+            } else {
+                actionLog = `<span style="color:var(--miss)">[MISS]</span> 冷启动`;
+            }
+
+            let chunkStart = Math.floor(op.j / 8) * 8;
+            state.valid = true;
+            state.tag = tag;
+            state.owner = op.owner;
+            state.text = `${op.owner}[${op.i}][${chunkStart}~${chunkStart+7}]`;
+            state.activeTouches = 1; 
+        }
+
+        cardEl.className = `set-card owner-${state.owner}`;
+        textEl.innerText = state.text;
+        hitsEl.innerText = `Hits: ${state.activeTouches}/8`;
+        
+        let pct = (state.activeTouches / 8) * 100;
+        barEl.style.width = `${pct}%`;
+        if (state.activeTouches === 8) barEl.classList.add('full');
+        else barEl.classList.remove('full');
+
+        let ownerColor = op.owner === 'A' ? 'var(--a-color)' : 'var(--b-color)';
+        logEvent(`${(currentStep+1).toString().padStart(4,'0')}: <strong style="color:${ownerColor}">${op.type}</strong> | S:${setIdx.toString().padStart(2,'0')} | ${actionLog}`);
+
+        currentStep++;
+        
+        // 降低 DOM 更新频率以支持狂飙模式
+        if(currentStep % 5 === 0 || currentStep === TOTAL_OPS || playInterval === null) {
+            document.getElementById('stat-ops').innerText = `${currentStep} / ${TOTAL_OPS}`;
+            document.getElementById('stat-evicts').innerText = evictCount;
+            document.getElementById('stat-hitrate').innerText = `${((hitCount / currentStep) * 100).toFixed(1)}%`;
+            document.getElementById('global-progress').style.width = `${(currentStep / TOTAL_OPS) * 100}%`;
+        }
+    }
+
+    document.getElementById('btn-step').onclick = doStep;
+    document.getElementById('btn-play').onclick = () => { 
+        clearInterval(playInterval); 
+        playInterval = setInterval(doStep, 20); 
+    };
+    document.getElementById('btn-fast').onclick = () => { 
+        clearInterval(playInterval); 
+        playInterval = setInterval(doStep, 1); // 1ms 狂飙，看红光闪烁
+    };
+    document.getElementById('btn-pause').onclick = () => { clearInterval(playInterval); playInterval = null; };
+    document.getElementById('btn-reset').onclick = () => { location.reload(); };
+</script>
+</body>
+</html>
