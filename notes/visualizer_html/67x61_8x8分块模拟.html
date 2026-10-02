@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>CacheLab 空间局部性透视 (Cache Line 利用率追踪)</title>
+    <title>CacheLab 67x61 矩阵 - Cache Line 利用率与满额连击追踪</title>
     <style>
         :root {
             --bg: #1a1a1a; --panel-bg: #222; --text: #d4d4d4;
@@ -49,7 +49,8 @@
         /* 右侧日志面板 */
         .log-panel { flex: 0.8; background: var(--panel-bg); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; }
         .stats-box { background: #111; padding: 15px; border-radius: 6px; margin-bottom: 15px; font-size: 0.95em; }
-        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+        /* 升级为 3 列网格，容纳“满 8 连击” */
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px; }
         .stat-item { background: #222; padding: 6px 10px; border-radius: 4px; border-left: 3px solid #555; }
         
         .log-box { flex: 1; background: #000; border: 1px solid #444; border-radius: 4px; padding: 10px; overflow-y: auto; font-size: 0.85em; line-height: 1.6; }
@@ -62,7 +63,7 @@
 </head>
 <body>
 
-<h2>CacheLab 67x61 矩阵 - Cache Line 利用率追踪 (8x8 Block)</h2>
+<h2>CacheLab 67x61 矩阵 - Cache Line 利用率与满额连击追踪</h2>
 
 <div class="controls">
     <button id="btn-step">单步执行 (Step)</button>
@@ -82,8 +83,9 @@
                 <div class="stat-item" style="border-color: #fff">进度: <span id="stat-ops">0 / 512</span></div>
                 <div class="stat-item" style="border-color: #ffeb3b">当前块: <span id="stat-block">Block(0,0)</span></div>
                 <div class="stat-item" style="border-color: var(--hit)">全局命中率: <span id="stat-hitrate" style="color:var(--hit); font-weight:bold;">0.0%</span></div>
-                <!-- ★ 修改点1：UI 上将“冲突踢出”改为“总 Miss 数” ★ -->
                 <div class="stat-item" style="border-color: var(--miss)">总 Miss 数: <span id="stat-misses" style="color:var(--miss); font-weight:bold;">0</span></div>
+                <!-- ★ 核心新增：满额连击统计卡片 ★ -->
+                <div class="stat-item" style="border-color: var(--full-bar); grid-column: span 2;">满额连击 (榨干8/8): <span id="stat-fullhits" style="color:var(--full-bar); font-weight:bold;">0</span></div>
             </div>
             <div class="bar-bg" style="height:4px;"><div class="bar-fill" id="global-progress" style="background:#1976d2"></div></div>
         </div>
@@ -100,15 +102,16 @@
     const ADDR_B_BASE = 65536; 
     const TOTAL_OPS = 512; 
 
+    // Cache 状态增加 fullCounted 标志，防止同一个 Line 重复触发满额计数
     let cache = Array(SETS).fill(null).map(() => ({ 
-        valid: false, tag: -1, owner: '', text: '[ 空 ]', activeTouches: 0 
+        valid: false, tag: -1, owner: '', text: '[ 空 ]', activeTouches: 0, fullCounted: false 
     }));
     
     let trace = []; 
     let currentStep = 0;
     let hitCount = 0;
-    // ★ 修改点2：将 evictCount 改为 missCount ★
     let missCount = 0; 
+    let fullHitsCount = 0; // ★ 新增：满 8 连击计数器
     let playInterval = null;
 
     const gridEl = document.getElementById('cache-grid');
@@ -174,8 +177,14 @@
             hitCount++;
             state.activeTouches = Math.min(state.activeTouches + 1, 8);
             actionLog = `<span style="color:var(--hit)">[HIT]</span> ${op.name}`;
+
+            // ★ 核心判定：检测是否刚刚达成 8/8 满额榨干
+            if (state.activeTouches === 8 && !state.fullCounted) {
+                fullHitsCount++;
+                state.fullCounted = true;
+                actionLog += ` <span style="color:var(--full-bar); font-weight:bold;">【🔥 满额连击达成】</span>`;
+            }
         } else {
-            // ★ 修改点3：只要没进入上面的 HIT 判定，就绝对是一次 Miss ★
             missCount++; 
 
             if (state.valid) {
@@ -191,6 +200,7 @@
             state.owner = op.owner;
             state.text = `${op.owner}[${op.i}][${chunkStart}~${chunkStart+7}]`;
             state.activeTouches = 1; 
+            state.fullCounted = false; // 重置满额状态标志位
         }
 
         cardEl.className = `set-card owner-${state.owner}`;
@@ -208,8 +218,8 @@
         currentStep++;
         document.getElementById('stat-ops').innerText = `${currentStep} / ${TOTAL_OPS}`;
         document.getElementById('stat-block').innerText = op.block;
-        // ★ 修改点4：更新 DOM 显示 ★
         document.getElementById('stat-misses').innerText = missCount;
+        document.getElementById('stat-fullhits').innerText = fullHitsCount; // ★ 更新 UI 满额连击数
         document.getElementById('stat-hitrate').innerText = `${((hitCount / currentStep) * 100).toFixed(1)}%`;
         document.getElementById('global-progress').style.width = `${(currentStep / TOTAL_OPS) * 100}%`;
     }
